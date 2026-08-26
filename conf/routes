@@ -1,3 +1,9 @@
 # Routes
+# ~~~~
+
 GET     /                           controllers.HomeController.index
+
+GET     /api/summary                controllers.ApiController.summary(groupBy: Option[String], state: Option[String], grade: Option[String], date: Option[String], issueMonth: Option[String], ficoBand: Option[String])
+GET     /api/meta                   controllers.ApiController.meta
+
 GET     /assets/*file               controllers.Assets.versioned(file)
