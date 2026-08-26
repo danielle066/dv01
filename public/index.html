@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Loan stats</title>
+  <style>
+    body { font-family: Georgia, serif; margin: 32px; color: #222; max-width: 960px; }
+    h1 { font-size: 22px; margin-bottom: 4px; }
+    .sub { color: #666; margin-bottom: 20px; }
+    label { margin-right: 12px; font-size: 14px; }
+    select { margin-right: 16px; }
+    button { margin-top: 8px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; font-size: 14px; }
+    th, td { border-bottom: 1px solid #ddd; padding: 6px 8px; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    .bar { background: #355e8c; height: 10px; display: inline-block; vertical-align: middle; }
+    .totals { background: #f6f6f6; }
+    .err { color: #a00; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>Loan stats</h1>
+  <p class="sub">Slice the 2017Q4 Lending Club tape by grade, state, issue month, or FICO band.</p>
+
+  <div>
+    <label>Group by
+      <select id="groupBy">
+        <option value="grade">grade</option>
+        <option value="state">state</option>
+        <option value="date">date</option>
+        <option value="fico">fico</option>
+      </select>
+    </label>
+    <label>State <select id="state"><option value="">all</option></select></label>
+    <label>Grade <select id="grade"><option value="">all</option></select></label>
+    <label>Month <select id="date"><option value="">all</option></select></label>
+    <label>FICO <select id="ficoBand"><option value="">all</option></select></label>
+    <div><button id="go">Apply</button></div>
+  </div>
+
+  <p id="status"></p>
+  <p class="err" id="err"></p>
+
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th>Bucket</th>
+        <th>Loans</th>
+        <th>Original bal</th>
+        <th>% of bal</th>
+        <th>Current bal</th>
+        <th>WA rate</th>
+        <th>WA FICO</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function money(n) {
+      return Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 });
+    }
+
+    function fillSelect(id, values) {
+      const sel = $(id);
+      const keep = sel.value;
+      sel.innerHTML = '<option value="">all</option>';
+      values.forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v;
+        sel.appendChild(opt);
+      });
+      if (keep) sel.value = keep;
+    }
+
+    async function loadMeta() {
+      const res = await fetch('/api/meta');
+      const meta = await res.json();
+      fillSelect('state', meta.states);
+      fillSelect('grade', meta.grades);
+      fillSelect('date', meta.issueMonths);
+      fillSelect('ficoBand', meta.ficoBands.filter(b => b !== '<660'));
+      $('status').textContent = meta.loanCount.toLocaleString() + ' loans loaded';
+    }
+
+    async function loadSummary() {
+      $('err').textContent = '';
+      const params = new URLSearchParams();
+      params.set('groupBy', $('groupBy').value);
+      ['state', 'grade', 'date', 'ficoBand'].forEach(k => {
+        const v = $(k).value;
+        if (v) params.set(k, v);
+      });
+      const res = await fetch('/api/summary?' + params.toString());
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        $('err').textContent = body.detail || body.error || ('HTTP ' + res.status);
+        return;
+      }
+      const data = await res.json();
+      const t = data.totals;
+      $('status').textContent =
+        t.loanCount.toLocaleString() + ' loans, orig ' + money(t.originalBalance) +
+        ', WA rate ' + t.weightedAvgRate.toFixed(2) + '%, WA FICO ' + t.weightedAvgFico.toFixed(0);
+
+      const maxBal = Math.max(...data.buckets.map(b => b.originalBalance), 1);
+      const tbody = document.querySelector('#tbl tbody');
+      tbody.innerHTML = '';
+
+      const addRow = (row, isTotal) => {
+        const tr = document.createElement('tr');
+        if (isTotal) tr.className = 'totals';
+        const pct = isTotal ? 1 : row.pctOfOriginalBalance;
+        tr.innerHTML =
+          '<td>' + row.key + '</td>' +
+          '<td>' + row.loanCount.toLocaleString() + '</td>' +
+          '<td>' + money(row.originalBalance) + '</td>' +
+          '<td>' + (pct * 100).toFixed(1) + '%</td>' +
+          '<td>' + money(row.currentBalance) + '</td>' +
+          '<td>' + row.weightedAvgRate.toFixed(2) + '%</td>' +
+          '<td>' + row.weightedAvgFico.toFixed(0) + '</td>' +
+          '<td><span class="bar" style="width:' + Math.round((row.originalBalance / maxBal) * 180) + 'px"></span></td>';
+        tbody.appendChild(tr);
+      };
+
+      data.buckets.forEach(b => addRow(b, false));
+      addRow({
+        key: 'Total',
+        loanCount: t.loanCount,
+        originalBalance: t.originalBalance,
+        currentBalance: t.currentBalance,
+        weightedAvgRate: t.weightedAvgRate,
+        weightedAvgFico: t.weightedAvgFico,
+        pctOfOriginalBalance: 1
+      }, true);
+    }
+
+    $('go').addEventListener('click', loadSummary);
+    loadMeta().then(loadSummary).catch(e => { $('err').textContent = e.message; });
+  </script>
+</body>
+</html>
